@@ -217,10 +217,16 @@ DESC
 
   # 接続確認
   def check_links(channel)
-    webhook_ids = channel.webhooks.map { |webhook| webhook.id }
+    webhook_ids = channel.webhooks.map do |webhook|
+      webhook.name =~ WEBHOOK_NAME_REG
+      [webhook.id, $1.to_i]
+    end.to_h
+
     @link_pairs[channel.id].each do |p_channel_id, p_webhook|
       webhook = @link_pairs[p_channel_id][channel.id]
-      remove_link(channel, p_channel_id) unless webhook_ids.include?(webhook.id)
+      unless webhook_ids.has_key?(webhook.id) && webhook_ids[webhook.id] == p_channel_id
+        remove_link(channel, p_channel_id)
+      end
     end
   end
 
