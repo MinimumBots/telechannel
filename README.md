@@ -13,7 +13,7 @@
 
 # 導入方法
 次のリンクから導入できます。（BOTの動作に必要な権限はあらかじめ付与されています。）  
-https://discordapp.com/api/oauth2/authorize?client_id=653253608858583040&permissions=536955904&scope=bot  
+https://discordapp.com/api/oauth2/authorize?client_id=653253608858583040&permissions=536988672&scope=bot  
   
 次のリンクは権限を自前で付与したい方向けの導入リンクです。  
 https://discordapp.com/api/oauth2/authorize?client_id=653253608858583040&permissions=0&scope=bot  
