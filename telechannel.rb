@@ -1,7 +1,6 @@
 require 'bundler/setup'
 require 'discordrb'
 require 'discordrb/webhooks/client'
-require 'open-uri'
 
 class Telechannel
   WEBHOOK_NAME_REG = /^Telehook<(\d+)>$/
@@ -25,7 +24,7 @@ class Telechannel
 
     # コマンド共通属性
     @command_attrs = {
-      permission_message: "⚠ **#{@bot.prefix}%name%** の実行には **チャンネル管理** 権限が必要です",
+      permission_message: "⚠ **#{@bot.prefix}%name%** コマンドの実行には **チャンネル管理** 権限が必要です",
       required_permissions: [:manage_channels]
     }
 
@@ -42,19 +41,24 @@ class Telechannel
     # コネクション削除
     @bot.command(:unlink, @command_attrs) do |event, p_channel_id|
       if p_channel_id !~ /^\d+$/
-        event.send_embed do |embed|
-          embed.title = "接続中のチャンネル一覧"
-          embed.description = ""
-          if get_pair_list(event.channel).each do |item|
-            embed.description += "#{item[:server_name]} ##{item[:channel_name]} : **`#{item[:channel_id]}`**\n"
-          end.empty?
-            embed.description = "(接続中のチャンネルはありません)"
-          end
-        end
+        event.send_message("⚠ チャンネルIDを指定してください")
         next
       end
       remove_link(event.channel, p_channel_id.to_i)
       nil
+    end
+
+    # 接続中のチャンネルを表示
+    @bot.command(:list, @command_attrs) do |event|
+      event.send_embed do |embed|
+        embed.title = "接続中のチャンネル一覧"
+        embed.description = ""
+        if get_pair_list(event.channel).each do |item|
+          embed.description += "#{item[:server_name]} ##{item[:channel_name]} : **`#{item[:channel_id]}`**\n"
+        end.empty?
+          embed.description = "(接続中のチャンネルはありません)"
+        end
+      end
     end
 
     # 全コネクションを削除
@@ -69,6 +73,7 @@ class Telechannel
         embed.description = <<DESC
 **`+link (相手のチャンネルID)`** : 指定されたチャンネルと接続します
 **`+unlink (相手のチャンネルID)`** : 指定されたチャンネルを切断します
+**`+list`** : このチャンネルに接続されているチャンネルを表示します
 **`+clear`** : このチャンネルの接続を全て切断します
 
 このチャンネルのIDは **`#{event.channel.id}`** です
@@ -81,6 +86,10 @@ DESC
       message.edit("応答時間: #{((message.timestamp - event.timestamp) * 1000).round}ms")
     end
 
+    @bot.command(:neko) do |event|
+      event.channel.send_file(File.open('./neko.png', 'r'), caption: "ねこです。よろしくおねがいします。")
+    end
+
     # Webhook更新イベント
     @bot.webhook_update do |event|
       check_links(event.channel)
@@ -89,6 +98,7 @@ DESC
 
     # メッセージイベント
     @bot.message do |event|
+      next unless event.channel.text?
       send_content(event)
       nil
     end
@@ -218,7 +228,7 @@ DESC
     channel = event.channel
     message = event.message
 
-    resume_links(channel) if @link_pairs[channel.id].empty?
+    resume_links(channel)
 
     @link_pairs[channel.id].each do |p_channel_id, p_webhook|
       client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
@@ -247,6 +257,8 @@ DESC
 
   # 接続再構築
   def resume_links(channel)
+    return unless @link_pairs[channel.id].empty?
+
     channel.webhooks.each do |webhook|
       next if webhook.owner.id != @bot.profile.id
       next if webhook.name !~ WEBHOOK_NAME_REG
