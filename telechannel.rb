@@ -87,7 +87,8 @@ DESC
     end
 
     @bot.command(:neko) do |event|
-      event.channel.send_file(File.open('./neko.png', 'r'), caption: "ねこです。よろしくおねがいします。")
+      path = File.expand_path('../neko.png', __FILE__)
+      event.channel.send_file(File.open(path, 'r'), caption: "ねこです。よろしくおねがいします。")
     end
 
     # Webhook更新イベント
