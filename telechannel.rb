@@ -50,6 +50,7 @@ class Telechannel
 
     # 接続中のチャンネルを表示
     @bot.command(:list, @command_attrs) do |event|
+      resume_links(event.channel)
       event.send_embed do |embed|
         embed.title = "接続中のチャンネル一覧"
         embed.description = ""
@@ -122,6 +123,19 @@ DESC
       return
     end
 
+    # 登録済み確認
+    if @link_queues[channel.id][p_channel.id]
+      channel.send_message(
+        "ℹ **指定されたチャンネルは接続を待っています**\n" + 
+        "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}link #{channel.id}`**"
+      ) unless no_msg
+      return
+    end
+    if @link_pairs[channel.id][p_channel.id]
+      channel.send_message("ℹ **指定されたチャンネルは接続済みです**") unless no_msg
+      return
+    end
+
     # ウェブフックを作成
     webhook = get_webhook(channel, p_channel)
     return unless webhook
@@ -170,11 +184,12 @@ DESC
           channel.send_message("ℹ 接続待ちがキャンセルされました") unless no_msg
         end
       else
+        channel.send_message("⚠ **指定されたチャンネルは接続されていません**") unless no_msg
+
         # 未登録のWebhookを削除
         channel.webhooks.each do |webhook|
           next if webhook.owner.id != @bot.profile.id
-          next if webhook.name !~ WEBHOOK_NAME_REG
-          next if $1.to_i != p_channel_id
+          next if webhook.name !~ WEBHOOK_NAME_REG || $1.to_i != p_channel_id
           webhook.delete
         end
       end
@@ -264,7 +279,7 @@ DESC
 
   # 接続再構築
   def resume_links(channel)
-    return unless @link_pairs[channel.id].empty?
+    return if @link_pairs.has_key?(channel.id) || @link_queues.has_key?(channel.id)
 
     channel.webhooks.each do |webhook|
       next if webhook.owner.id != @bot.profile.id
@@ -281,8 +296,7 @@ DESC
       # ペア登録
       p_channel.webhooks.each do |webhook|
         next if webhook.owner.id != @bot.profile.id
-        next if webhook.name !~ WEBHOOK_NAME_REG
-        next if $1.to_i != channel.id
+        next if webhook.name !~ WEBHOOK_NAME_REG || $1.to_i != channel.id
         add_link(p_channel, channel.id, true)
       end
     end
