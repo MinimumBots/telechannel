@@ -76,7 +76,7 @@ class Telechannel
 **`+unlink (相手のチャンネルID)`** : 指定されたチャンネルを切断します
 **`+list`** : このチャンネルに接続されているチャンネルを表示します
 **`+clear`** : このチャンネルの接続を全て切断します
-
+  
 このチャンネルのIDは **`#{event.channel.id}`** です
 DESC
       end
@@ -92,16 +92,22 @@ DESC
       event.channel.send_file(File.open(path, 'r'), caption: "ねこです。よろしくおねがいします。")
     end
 
+    # メッセージイベント
+    @bot.message do |event|
+      next unless event.channel.text?
+      send_content(event)
+      nil
+    end
+
     # Webhook更新イベント
     @bot.webhook_update do |event|
       check_links(event.channel)
       nil
     end
 
-    # メッセージイベント
-    @bot.message do |event|
-      next unless event.channel.text?
-      send_content(event)
+    # チャンネル削除イベント
+    @bot.channel_delete do |event|
+      lost_links(event.id)
       nil
     end
   end
@@ -207,7 +213,7 @@ DESC
         channel.send_message("⛔ 接続相手と切断されました") unless no_msg
       end
     end
-    
+
     begin; p_webhook.delete
     rescue; nil; end
     if p_channel
@@ -227,6 +233,14 @@ DESC
     # チャンネルのWebhookを削除
     channel.webhooks.each do |webhook|
       webhook.delete if webhook.owner.id == @bot.profile.id
+    end
+  end
+
+  # チャンネルIDの接続先をすべて切断
+  def lost_links(channel_id)
+    @link_pairs[channel_id].each do |p_channel_id, p_webhook|
+      p_channel = get_p_channel(p_channel_id)
+      remove_link(p_channel, channel_id)
     end
   end
 
@@ -265,7 +279,7 @@ DESC
         client.execute do |builder|
           builder.avatar_url = message.author.avatar_url
           builder.username   = "#{display_name} (@#{channel.server.name} ##{channel.name})"
-          
+
           message.attachments.each do |attachment|
             builder.content += "📎 #{attachment.url}\n"
           end
