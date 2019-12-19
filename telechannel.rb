@@ -4,11 +4,12 @@ require 'discordrb/webhooks/client'
 
 class Telechannel
   WEBHOOK_NAME_REG = /^Telehook<(\d+)>$/
+  EMBED_COLOR = 0xea596e
 
   def initialize(bot_token)
     @bot = Discordrb::Commands::CommandBot.new(
       token: bot_token,
-      prefix: '+',
+      prefix: "/",
       help_command: false,
       webhook_commands: false,
       ignore_bots: true
@@ -19,7 +20,7 @@ class Telechannel
 
     # BOT初期化処理
     @bot.ready do
-      @bot.game = "#{@bot.prefix}help"
+      @bot.game = "#{@bot.prefix}connect"
     end
 
     # コマンド共通属性
@@ -29,17 +30,28 @@ class Telechannel
     }
 
     # コネクション作成
-    @bot.command(:link, @command_attrs) do |event, p_channel_id|
+    @bot.command(:connect, @command_attrs) do |event, p_channel_id|
+      if p_channel_id.nil?
+        view_help(event)
+        next
+      end
+
       if p_channel_id !~ /^\d+$/
         event.send_message("⚠ チャンネルIDを指定してください")
         next
       end
+
       add_link(event.channel, p_channel_id.to_i)
       nil
     end
 
     # コネクション削除
-    @bot.command(:unlink, @command_attrs) do |event, p_channel_id|
+    @bot.command(:disconnect, @command_attrs) do |event, p_channel_id|
+      if p_channel_id.nil?
+        view_help(event)
+        next
+      end
+
       if p_channel_id !~ /^\d+$/
         event.send_message("⚠ チャンネルIDを指定してください")
         next
@@ -49,52 +61,28 @@ class Telechannel
     end
 
     # 接続中のチャンネルを表示
-    @bot.command(:list, @command_attrs) do |event|
+    @bot.command(:connecting, @command_attrs) do |event|
       resume_links(event.channel)
       event.send_embed do |embed|
+        embed.color = EMBED_COLOR
         embed.title = "接続中のチャンネル一覧"
-        embed.description = ""
-        if get_pair_list(event.channel).each do |item|
-          embed.description += "#{item[:server_name]} ##{item[:channel_name]} : **`#{item[:channel_id]}`**\n"
-        end.empty?
+
+        pair_list = get_pair_list(event.channel)
+        if pair_list.empty?
           embed.description = "(接続中のチャンネルはありません)"
+        else
+          embed.description = ""
+          pair_list.each do |pair|
+            embed.description += "#{pair[:server_name]} ##{pair[:channel_name]} : **`#{pair[:channel_id]}`**\n"
+          end
         end
       end
-    end
-
-    # 全コネクションを削除
-    @bot.command(:clear, @command_attrs) do |event|
-      remove_all_links(event.channel)
-      nil
-    end
-
-    @bot.command(:help, @command_attrs) do |event|
-      event.send_embed do |embed|
-        embed.title = "コマンド一覧"
-        embed.description = <<DESC
-**`+link (相手のチャンネルID)`** : 指定されたチャンネルと接続します
-**`+unlink (相手のチャンネルID)`** : 指定されたチャンネルを切断します
-**`+list`** : このチャンネルに接続されているチャンネルを表示します
-**`+clear`** : このチャンネルの接続を全て切断します
-  
-このチャンネルのIDは **`#{event.channel.id}`** です
-DESC
-      end
-    end
-
-    @bot.command(:ping) do |event|
-      message = event.send_message("計測中...")
-      message.edit("応答時間: #{((message.timestamp - event.timestamp) * 1000).round}ms")
-    end
-
-    @bot.command(:neko) do |event|
-      path = File.expand_path('../neko.png', __FILE__)
-      event.channel.send_file(File.open(path, 'r'), caption: "ねこです。よろしくおねがいします。")
     end
 
     # メッセージイベント
     @bot.message do |event|
       next unless event.channel.text?
+      next if event.content.start_with?(@bot.prefix)
       send_content(event)
       nil
     end
@@ -119,6 +107,23 @@ DESC
 
   private
 
+  # ヘルプを表示
+  def view_help(event)
+    event.send_embed do |embed|
+      embed.color = EMBED_COLOR
+      embed.title = "Telechannel の使い方"
+      embed.description = <<DESC
+コマンドで簡単に他サーバー、他チャンネルと接続できるBOTです。
+**`#{@bot.prefix}connect [相手のチャンネルID]`** : 指定されたチャンネルと接続します
+**`#{@bot.prefix}disconnect [相手のチャンネルID]`** : 指定されたチャンネルを切断します
+**`#{@bot.prefix}connecting`** : このチャンネルに接続されているチャンネルを表示します
+
+このチャンネルと接続するには、
+相手のチャンネルで **`#{@bot.prefix}connect #{event.channel.id}`** を実行してください。
+DESC
+    end
+  end
+
   # ペアまたはキューに登録
   def add_link(channel, p_channel_id, no_msg = false)
     # チャンネル取得
@@ -132,8 +137,8 @@ DESC
     # 登録済み確認
     if @link_queues[channel.id][p_channel.id]
       channel.send_message(
-        "ℹ **指定されたチャンネルは接続を待っています**\n" + 
-        "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}link #{channel.id}`**"
+        "ℹ 既に **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" + 
+        "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}connect #{channel.id}`**"
       ) unless no_msg
       return
     end
@@ -154,7 +159,7 @@ DESC
       @link_queues[channel.id][p_channel.id] = webhook
       channel.send_message(
         "ℹ **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" +
-        "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}link #{channel.id}`**"
+        "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}connect #{channel.id}`**"
       ) unless no_msg
     else
       # ペアに登録
