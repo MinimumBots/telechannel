@@ -25,7 +25,7 @@ class Telechannel
 
     # コマンド共通属性
     @command_attrs = {
-      permission_message: "⚠ **#{@bot.prefix}%name%** コマンドの実行には **チャンネル管理** 権限が必要です",
+      permission_message: "⚠️ **#{@bot.prefix}%name%** コマンドの実行には **チャンネル管理** 権限が必要です",
       required_permissions: [:manage_channels]
     }
 
@@ -37,7 +37,7 @@ class Telechannel
       end
 
       if p_channel_id !~ /^\d+$/
-        event.send_message("⚠ チャンネルIDを指定してください")
+        event.send_message("⚠️ チャンネルIDを指定してください")
         next
       end
 
@@ -53,7 +53,7 @@ class Telechannel
       end
 
       if p_channel_id !~ /^\d+$/
-        event.send_message("⚠ チャンネルIDを指定してください")
+        event.send_message("⚠️ チャンネルIDを指定してください")
         next
       end
       remove_link(event.channel, p_channel_id.to_i)
@@ -126,6 +126,7 @@ class Telechannel
       embed.title = "Telechannel の使い方"
       embed.description = <<DESC
 コマンドで簡単に他サーバー、他チャンネルと接続できるBOTです。
+
 **`#{@bot.prefix}connect [相手のチャンネルID]`** : 指定されたチャンネルと接続します
 **`#{@bot.prefix}disconnect [相手のチャンネルID]`** : 指定されたチャンネルを切断します
 **`#{@bot.prefix}connecting`** : このチャンネルに接続されているチャンネルを表示します
@@ -142,20 +143,20 @@ DESC
     p_channel = get_p_channel(p_channel_id, channel && !no_msg)
     return unless p_channel
     if p_channel.id == channel.id
-      channel.send_message("⚠ **指定されたチャンネルはこのチャンネルです**") unless no_msg
+      channel.send_message("⚠️ **指定されたチャンネルはこのチャンネルです**") unless no_msg
       return
     end
 
     # 登録済み確認
     if @link_queues[channel.id][p_channel.id]
       channel.send_message(
-        "ℹ 既に **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" + 
+        "ℹ️ 既に **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" + 
         "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}connect #{channel.id}`**"
       ) unless no_msg
       return
     end
     if @link_pairs[channel.id][p_channel.id]
-      channel.send_message("ℹ **指定されたチャンネルは接続済みです**") unless no_msg
+      channel.send_message("ℹ️ **指定されたチャンネルは接続済みです**") unless no_msg
       return
     end
 
@@ -170,15 +171,21 @@ DESC
       # キューに登録
       @link_queues[channel.id][p_channel.id] = webhook
       channel.send_message(
-        "ℹ **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" +
+        "ℹ️ **#{p_channel.server.name} ##{p_channel.name}** との接続を待っています\n" +
         "相手チャンネルで次のコマンドを実行してください **`#{@bot.prefix}connect #{channel.id}`**"
       ) unless no_msg
     else
       # ペアに登録
       @link_pairs[channel.id][p_channel.id] = p_webhook
       @link_pairs[p_channel.id][channel.id] = webhook
-      channel.send_message("✅ **#{p_channel.server.name} ##{p_channel.name}** と接続されました") unless no_msg
-      p_channel.send_message("✅ **#{channel.server.name} ##{channel.name}** と接続されました") unless no_msg
+      channel.send_message(
+        "✅ **#{p_channel.server.name} ##{p_channel.name}** と接続されました\n" +
+        "切断するには次のコマンドを実行してください **`#{@bot.prefix}disconnect #{p_channel.id}`**"
+      ) unless no_msg
+      p_channel.send_message(
+        "✅ **#{channel.server.name} ##{channel.name}** と接続されました\n" +
+        "切断するには次のコマンドを実行してください **`#{@bot.prefix}disconnect #{channel.id}`**"
+      ) unless no_msg
     end
 
     p_channel
@@ -189,7 +196,7 @@ DESC
     # チャンネル取得
     p_channel = get_p_channel(p_channel_id)
     if p_channel && p_channel.id == channel.id
-      channel.send_message("⚠ **指定されたチャンネルはこのチャンネルです**") unless no_msg
+      channel.send_message("⚠️ **指定されたチャンネルはこのチャンネルです**") unless no_msg
       return
     end
 
@@ -202,12 +209,12 @@ DESC
         begin; webhook.delete
         rescue; nil; end
         if p_channel
-          channel.send_message("ℹ **#{p_channel.server.name} ##{p_channel.name}** の接続待ちがキャンセルされました") unless no_msg
+          channel.send_message("ℹ️ **#{p_channel.server.name} ##{p_channel.name}** の接続待ちがキャンセルされました") unless no_msg
         else
-          channel.send_message("ℹ 接続待ちがキャンセルされました") unless no_msg
+          channel.send_message("ℹ️ 接続待ちがキャンセルされました") unless no_msg
         end
       else
-        channel.send_message("⚠ **指定されたチャンネルは接続されていません**") unless no_msg
+        channel.send_message("⚠️ **指定されたチャンネルは接続されていません**") unless no_msg
 
         # 未登録のWebhookを削除
         channel.webhooks.each do |webhook|
@@ -293,14 +300,25 @@ DESC
       end
 
       begin
-        client.execute do |builder|
-          builder.avatar_url = message.author.avatar_url
-          builder.username   = "#{display_name} (@#{channel.server.name} ##{channel.name})"
-
-          message.attachments.each do |attachment|
-            builder.content += "📎 #{attachment.url}\n"
+        # メッセージ送信
+        if !message.content.strip.empty?
+          client.execute do |builder|
+            builder.avatar_url = message.author.avatar_url
+            builder.username = "#{display_name} (@#{channel.server.name} ##{channel.name})"
+            builder.content += message.content
           end
-          builder.content += message.content
+        end
+
+        # 添付ファイル(CDNのURL)送信
+        if !message.attachments.empty?
+          client.execute do |builder|
+            builder.avatar_url = message.author.avatar_url
+            builder.username = "#{display_name} (@#{channel.server.name} ##{channel.name})"
+            builder.content = "(添付ファイル)\n"
+            message.attachments.each do |attachment|
+              builder.content += attachment.spoiler? ? "📎 ||#{attachment.url}||\n" : "📎 #{attachment.url}\n"
+            end
+          end
         end
       rescue RestClient::NotFound
         remove_link(channel, p_channel_id)
@@ -338,12 +356,12 @@ DESC
     begin
       p_channel = @bot.channel(p_channel_id)
     rescue Discordrb::Errors::NoPermission
-      channel.send_message("⚠ **指定されたチャンネルにBOTが導入されていません**") if channel
+      channel.send_message("⚠️ **指定されたチャンネルにBOTが導入されていません**") if channel
       return nil
     end
 
     if p_channel.nil?
-      channel.send_message("⚠ **指定されたチャンネルは存在しません**") if channel
+      channel.send_message("⚠️ **指定されたチャンネルは存在しません**") if channel
       return nil
     end
 
@@ -359,7 +377,7 @@ DESC
         $1.to_i == p_channel.id && webhook.owner.id == @bot.profile.id
       end
     rescue Discordrb::Errors::NoPermission
-      channel.send_message("⚠ BOTに **ウェブフックの管理** 権限が必要です")
+      channel.send_message("⚠️ BOTに **ウェブフックの管理** 権限が必要です")
       return nil
     end
 
@@ -368,7 +386,7 @@ DESC
       begin
         webhook = channel.create_webhook("Telehook<#{p_channel.id}>")
       rescue Discordrb::Errors::NoPermission
-        channel.send_message("⚠ BOTに **ウェブフックの管理** 権限が必要です")
+        channel.send_message("⚠️ BOTに **ウェブフックの管理** 権限が必要です")
         return nil
       end
       return webhook
