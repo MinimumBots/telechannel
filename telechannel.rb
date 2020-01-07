@@ -99,6 +99,20 @@ class Telechannel
       nil
     end
 
+    # 招待コマンド
+    @bot.mention do |event|
+      next if event.content !~ /^<@!?#{@bot.profile.id}> ?invite/
+      channel = event.author.pm
+      channel.send_embed do |embed|
+        embed.color = EMBED_COLOR
+        embed.title = "Telechannel に興味をもっていただき、ありがとうございます！"
+        embed.description = <<DESC
+このBOTは簡単なコマンド操作でチャンネル間の相互チャットを実現できるBOTです。
+BOTの使用方法・導入方法は[こちら](https://github.com/GrapeColor/telechannel/blob/master/README.md)のリンクをご覧ください。
+DESC
+      end
+    end
+
     # デバッグコマンド
     @bot.mention(in: ENV['ADMIN_CHANNEL_ID'].to_i, from: ENV['ADMIN_USER_ID'].to_i) do |event|
       next if event.content !~ /^<@!?\d+> admin (.+)/
@@ -133,6 +147,8 @@ class Telechannel
 
 このチャンネルと接続するには、
 相手のチャンネルで **`#{@bot.prefix}connect #{event.channel.id}`** を実行してください。
+
+[詳しい使用方法](https://github.com/GrapeColor/telechannel/blob/master/README.md)
 DESC
     end
   end
