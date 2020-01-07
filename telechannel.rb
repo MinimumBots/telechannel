@@ -418,7 +418,7 @@ DESC
 
   # 接続済みリスト取得
   def get_pair_list(channel)
-    return unless @link_pairs.has_key?(channel.id)
+    return [] unless @link_pairs.has_key?(channel.id)
     @link_pairs[channel.id].map do |p_channel_id, p_webhook|
       p_channel = get_p_channel(p_channel_id)
       next unless p_channel
