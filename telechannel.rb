@@ -266,8 +266,10 @@ DESC
   # すべての接続を切断
   def remove_all_links(channel)
     # ペア情報を元にWebhookを削除
-    @link_pairs[channel.id].each do |p_channel_id, p_webhook|
-      remove_link(channel, p_channel_id)
+    if @link_pairs.has_key?(channel.id)
+      @link_pairs[channel.id].each do |p_channel_id, p_webhook|
+        remove_link(channel, p_channel_id)
+      end
     end
 
     # チャンネルのWebhookを削除
@@ -278,6 +280,7 @@ DESC
 
   # チャンネルIDの接続先をすべて切断
   def lost_links(channel_id)
+    return unless @link_pairs.has_key?(channel.id)
     @link_pairs[channel_id].each do |p_channel_id, p_webhook|
       p_channel = get_p_channel(p_channel_id)
       remove_link(p_channel, channel_id)
@@ -291,6 +294,7 @@ DESC
       [webhook.id, $1.to_i]
     end.to_h
 
+    return unless @link_pairs.has_key?(channel.id)
     @link_pairs[channel.id].each do |p_channel_id, p_webhook|
       webhook = @link_pairs[p_channel_id][channel.id]
       unless webhook_ids.has_key?(webhook.id) && webhook_ids[webhook.id] == p_channel_id
@@ -306,6 +310,7 @@ DESC
 
     resume_links(channel)
 
+    return unless @link_pairs.has_key?(channel.id)
     @link_pairs[channel.id].each do |p_channel_id, p_webhook|
       client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
 
@@ -413,6 +418,7 @@ DESC
 
   # 接続済みリスト取得
   def get_pair_list(channel)
+    return unless @link_pairs.has_key?(channel.id)
     @link_pairs[channel.id].map do |p_channel_id, p_webhook|
       p_channel = get_p_channel(p_channel_id)
       next unless p_channel
