@@ -513,7 +513,6 @@ class Telechannel
           client.execute do |builder|
             builder.avatar_url = message.author.avatar_url
             builder.username = gen_webhook_username(channel, p_channel, message.author)
-            builder.content = "⬆️ **添付ファイル**\n"
             message.attachments.each do |attachment|
               builder.content += attachment.spoiler? ? "||#{attachment.url}||\n" : "#{attachment.url}\n"
             end
