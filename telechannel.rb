@@ -18,6 +18,7 @@ class Telechannel
 
   def initialize(bot_token)
     @link_pairs  = Hash.new { |hash, key| hash[key] = {} }  # 接続済み
+    @error_servers = [] # Webhook取得に失敗したサーバー一覧
 
     @bot = Discordrb::Commands::CommandBot.new(
       token: bot_token,
@@ -402,38 +403,58 @@ class Telechannel
   # 接続の再開
   def resume_links
     @bot.servers.each do |_, server|
-      begin
-        server.webhooks.each do |webhook|
-          next if webhook.owner != @bot.profile
+      resume_server_links(server)
+    end
+  end
 
-          channel = webhook.channel
-          begin
-            p_channel = @bot.channel(webhook.name[/Telehook<(\d+)>/, 1])
-          rescue
-            webhook.delete("Lost connection channel")
+  # 指定サーバーの接続再開
+  def resume_server_links(server)
+    begin
+      server.webhooks.each do |webhook|
+        next if webhook.owner != @bot.profile
 
-            channel.send_embed do |embed|
-              embed.color = 0xbe1931
-              embed.title = "⛔ 接続が切断されました"
-              embed.description = "相手チャンネルが見つからないため、接続が切断されました。"
-            end
+        channel = webhook.channel
+        begin
+          p_channel = @bot.channel(webhook.name[/Telehook<(\d+)>/, 1])
+        rescue
+          webhook.delete("Lost connection channel")
+
+          channel.send_embed do |embed|
+            embed.color = 0xbe1931
+            embed.title = "⛔ 接続が切断されました"
+            embed.description = "相手チャンネルが見つからないため、接続が切断されました。"
           end
 
-          @link_pairs[p_channel.id][channel.id] = webhook
+          next
         end
-      rescue; nil; end
+
+        @link_pairs[p_channel.id][channel.id] = webhook
+      end
+    rescue
+      @error_servers << server.id
+      return
     end
+
+    true
   end
 
   #================================================
 
   # 接続作成
   def create_link(channel, p_channel)
-    webhook = channel.create_webhook(
-      "Telehook<#{p_channel.id}>",
-      @webhook_icon,
-      "To connect with #{p_channel.server.name} ##{p_channel.name}"
-    )
+    if @error_servers.delete(channel.server.id)
+      return unless resume_server_links(channel.server)
+    end
+
+    begin
+      webhook = channel.create_webhook(
+        "Telehook<#{p_channel.id}>",
+        @webhook_icon,
+        "To connect with #{p_channel.server.name} ##{p_channel.name}"
+      )
+    rescue
+      return
+    end
 
     @link_pairs[p_channel.id][channel.id] = webhook
   end
