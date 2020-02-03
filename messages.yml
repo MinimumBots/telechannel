@@ -1,0 +1,31 @@
+:help:
+  :color: 0x3b88c3
+  :title: 🇶 Telechannel の使い方
+  :description: |
+    他チャンネルと相互チャットや、一方へのメッセージ転送が実現できるBOTです。
+
+    **●指定チャンネルと接続**
+    ```/connect [チャンネルID or チャンネルメンション]```
+    指定されたチャンネルID、またはチャンネルメンションのチャンネルと接続します。
+    接続方法を、相互接続・一方向接続(受信側/送信側)から選択できます。
+
+    **●指定チャンネルと切断**
+    ```/disconnect [チャンネルID or チャンネルメンション]```
+    指定されたチャンネルID、またはチャンネルメンションのチャンネルから切断します。
+
+    **●接続中チャンネル一覧**
+    ```/connecting```
+    このチャンネルと接続してるチャンネルの接続方法と名前、IDを表示します。
+
+    **●権限の検証**
+    ```/connectable```
+    このチャンネルでBOTの動作に必要な権限があるか、検証します。
+
+    [詳しい使用方法](https://github.com/GrapeColor/telechannel/blob/master/README.md)
+
+:invite:
+  :color: 0xdd2e44
+  :title: 💟 Telechannel にご興味をもっていただき、ありがとうございます
+  :description: |
+    このBOTは簡単なコマンド操作でチャンネル間の相互チャットや、一方のチャンネルへのメッセージ転送などを実現できるBOTです。
+    BOTの使用方法・導入方法は[こちら](https://github.com/GrapeColor/telechannel/blob/master/README.md)のリンクをご覧ください。
