@@ -523,6 +523,7 @@ class Telechannel
       unless message.content.empty?
         await = Thread.new do
           @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
+            next if event.author.name !~ /^#{message.author.distinct}/
             @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
             true
           end
@@ -544,6 +545,7 @@ class Telechannel
       unless message.attachments.empty?
         await = Thread.new do
           @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
+            next if event.author.name !~ /^#{message.author.distinct}/
             @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
             true
           end
