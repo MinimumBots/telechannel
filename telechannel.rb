@@ -17,15 +17,14 @@ class Telechannel
   }
 
   def initialize(bot_token)
-    @link_pairs  = Hash.new { |hash, key| hash[key] = {} }  # 接続済み
+    @link_pairs = Hash.new { |hash, key| hash[key] = {} }  # 接続済み
+    @relation_msgs = Hash.new { |hash, key| hash[key] = [] } # 転送メッセージの関係性
     @error_servers = [] # Webhook取得に失敗したサーバー一覧
 
     @bot = Discordrb::Commands::CommandBot.new(
       token: bot_token,
       prefix: "/",
       help_command: false,
-      webhook_commands: false,
-      ignore_bots: true
     )
 
     # BOT初期化処理
@@ -55,12 +54,14 @@ class Telechannel
 
     # 接続中のチャンネルを表示
     @bot.command(:connecting) do |event|
+      next unless check_permission(event.channel, event.author)
       listing_links(event)
       nil
     end
 
     # BOTに必要な権限の検証
     @bot.command(:connectable) do |event|
+      next unless check_permission(event.channel, event.author)
       test_permittion(event.channel)
       nil
     end
@@ -68,6 +69,12 @@ class Telechannel
     # メッセージイベント
     @bot.message do |event|
       transfer_message(event)
+      nil
+    end
+
+    # メッセージ削除イベント
+    @bot.message_delete do |event|
+      destroy_messages(event.id)
       nil
     end
 
@@ -105,6 +112,7 @@ class Telechannel
 
   # 実行権限チェック
   def check_permission(channel, member)
+    return if member.bot_account?
     return unless member.is_a?(Discordrb::Member)
     return unless member.permission?(:manage_channels, channel)
     true
@@ -167,7 +175,7 @@ class Telechannel
     channel = event.channel
     user = event.author
 
-    # 接続切り替え
+    # 接続済み検証
     return unless link_validation(channel, p_channel, user)
 
     # 接続方法選択
@@ -417,7 +425,7 @@ class Telechannel
         begin
           p_channel = @bot.channel(webhook.name[/Telehook<(\d+)>/, 1])
         rescue
-          webhook.delete("Lost connection channel")
+          webhook.delete("Other a channel have been lost.")
 
           channel.send_embed do |embed|
             embed.color = 0xbe1931
@@ -450,7 +458,7 @@ class Telechannel
       webhook = channel.create_webhook(
         "Telehook<#{p_channel.id}>",
         @webhook_icon,
-        "To connect with #{p_channel.server.name} ##{p_channel.name}"
+        "To receive messages from other a channel."
       )
     rescue
       return
@@ -464,7 +472,7 @@ class Telechannel
     webhook = @link_pairs[p_channel.id].delete(channel.id)
 
     begin
-      webhook.delete("To disconnect with #{p_channel.server.name} ##{p_channel.name}")
+      webhook.delete("To disconnect from other a channel.")
     rescue; nil; end
   end
 
@@ -474,7 +482,7 @@ class Telechannel
     webhook = @link_pairs[p_channel_id].delete(channel.id)
 
     begin
-      webhook.delete("Lost connection channel")
+      webhook.delete("Other a channel have been lost.")
     rescue; nil; end
   end
 
@@ -485,6 +493,10 @@ class Telechannel
     channel = event.channel
     message = event.message
 
+    return if event.author.bot_account?
+    return unless @link_pairs.has_key?(channel.id)
+
+    posts = []
     @link_pairs[channel.id].each do |p_channel_id, p_webhook|
       begin
         p_channel = @bot.channel(p_channel_id)
@@ -495,12 +507,28 @@ class Telechannel
           embed.title = "⛔ 接続が切断されました"
           embed.description = "相手チャンネルが見つからないため、接続が切断されました。"
         end
+        next
       end
 
-      client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
-      begin
-        # メッセージ送信
-        unless message.content.empty?
+      posts << Thread.new { post_webhook(channel, p_channel, p_webhook, message) }
+    end
+    posts.each {|post| post.join }
+  end
+
+  def post_webhook(channel, p_channel, p_webhook, message)
+    client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
+
+    begin
+      # メッセージ送信
+      unless message.content.empty?
+        await = Thread.new do
+          @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
+            @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
+            true
+          end
+        end
+
+        execute = Thread.new do
           client.execute do |builder|
             builder.avatar_url = message.author.avatar_url
             builder.username = gen_webhook_username(channel, p_channel, message.author)
@@ -508,8 +536,20 @@ class Telechannel
           end
         end
 
-        # 添付ファイル(CDNのURL)送信
-        unless message.attachments.empty?
+        await.join
+        execute.join
+      end
+
+      # 添付ファイル(CDNのURL)送信
+      unless message.attachments.empty?
+        await = Thread.new do
+          @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
+            @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
+            true
+          end
+        end
+
+        execute = Thread.new do
           client.execute do |builder|
             builder.avatar_url = message.author.avatar_url
             builder.username = gen_webhook_username(channel, p_channel, message.author)
@@ -518,31 +558,45 @@ class Telechannel
             end
           end
         end
-      rescue RestClient::NotFound
-        destroy_link(channel, p_channel)
-        destroy_link(p_channel, channel)
 
-        channel.send_embed do |embed|
-          embed.color = 0xbe1931
-          embed.title = "⛔ 接続が切断されました"
-          embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-          embed.description += " のウェブフックが見つからないため、接続が切断されました。"
-        end
-
-        p_channel.send_embed do |embed|
-          embed.color = 0xbe1931
-          embed.title = "⛔ 接続が切断されました"
-          embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-          embed.description += " のウェブフックが見つからないため、接続が切断されました。"
-        end
+        await.join
+        execute.join
       end
+    rescue RestClient::NotFound
+      destroy_link(channel, p_channel)
+      destroy_link(p_channel, channel)
+
+      channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+        embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+      end
+
+      p_channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
+        embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+      end
+    end
+  end
+
+  # 関係するメッセージの削除
+  def destroy_messages(message_id)
+    return unless relation = @relation_msgs.delete(message_id)
+
+    relation.each do |data|
+      begin
+        Discordrb::API::Channel.delete_message(@bot.token, data[:channel_id], data[:message_id])
+      rescue; nil; end
     end
   end
 
   #================================================
 
   # 接続済みリストを表示
-  LINK_MODE_ICONS = { mutual: "↔️", send: "➡️", receive: "⬅️" }
+  LINK_MODE_ICONS = { mutual: "↔️", receive: "⬅️", send: "➡️" }
   def listing_links(event)
     channel = event.channel
 
@@ -577,7 +631,7 @@ class Telechannel
     channel.send_embed do |embed|
       embed.color = 0x3b88c3
       embed.title = "ℹ️ 接続中のチャンネル一覧"
-      embed.description = "↔️ 相互接続　➡️ 一方向接続(送信側)　⬅️ 一方向接続(受信側)\n"
+      embed.description = "↔️ 相互接続　⬅️ 一方向接続(受信側)　➡️ 一方向接続(送信側)\n"
       link_list.each do |p_channel_id, item|
         embed.description += "\n#{LINK_MODE_ICONS[item[:mode]]} #{item[:name]} ID: `#{p_channel_id}`"
       end
