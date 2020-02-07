@@ -406,31 +406,27 @@ class Telechannel
     destroy_link(channel, p_channel)
     destroy_link(p_channel, channel)
 
-    begin
-      channel.send_embed do |embed|
-        embed.color = 0xbe1931
-        embed.title = "⛔ 接続が切断されました"
-        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-        embed.description += " と接続が切断されました。"
-        embed.footer = Discordrb::Webhooks::EmbedFooter.new(
-          text: user.distinct,
-          icon_url: user.avatar_url
-        )
-      end
-    rescue; nil; end
+    channel.send_embed do |embed|
+      embed.color = 0xbe1931
+      embed.title = "⛔ 接続が切断されました"
+      embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+      embed.description += " と接続が切断されました。"
+      embed.footer = Discordrb::Webhooks::EmbedFooter.new(
+        text: user.distinct,
+        icon_url: user.avatar_url
+      )
+    end
 
-    begin
-      p_channel.send_embed do |embed|
-        embed.color = 0xbe1931
-        embed.title = "⛔ 接続が切断されました"
-        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-        embed.description += " と接続が切断されました。"
-        embed.footer = Discordrb::Webhooks::EmbedFooter.new(
-          text: user.distinct,
-          icon_url: user.avatar_url
-        )
-      end
-    rescue; nil; end
+    p_channel.send_embed do |embed|
+      embed.color = 0xbe1931
+      embed.title = "⛔ 接続が切断されました"
+      embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
+      embed.description += " と接続が切断されました。"
+      embed.footer = Discordrb::Webhooks::EmbedFooter.new(
+        text: user.distinct,
+        icon_url: user.avatar_url
+      )
+    end
   end
 
   #================================================
@@ -544,77 +540,75 @@ class Telechannel
     posts.each {|post| post.join }
   end
 
+  # Webhookへの送信処理
   def post_webhook(channel, p_channel, p_webhook, message)
     client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
 
-    begin
       # メッセージ送信
       unless message.content.empty?
-        await = Thread.new do
-          @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
-            next if event.author.name !~ /^#{message.author.distinct}/
-            next if event.message.id < message.id
-            @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
-            true
-          end
-        end
+        await = chase_message(p_channel, p_webhook, message)
+        execute = execute_webhook(channel, p_channel, client, message.author, message.content, await)
 
-        execute = Thread.new do
-          client.execute do |builder|
-            builder.avatar_url = message.author.avatar_url
-            builder.username = gen_webhook_username(channel, p_channel, message.author)
-            builder.content = message.content
-          end
-        end
-
-        await.value
-        execute.value
+        await.join
+        execute.join
       end
 
       # 添付ファイル(CDNのURL)送信
       unless message.attachments.empty?
-        await = Thread.new do
-          @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
-            next if event.author.name !~ /^#{message.author.distinct}/
-            @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
-            true
-          end
-        end
+        content = attachments.map do |attachment|
+          attachment.spoiler? ? "||#{attachment.url}||" : attachment.url
+        end.join("\n")
 
-        execute = Thread.new do
-          client.execute do |builder|
-            builder.avatar_url = message.author.avatar_url
-            builder.username = gen_webhook_username(channel, p_channel, message.author)
-            message.attachments.each do |attachment|
-              builder.content += attachment.spoiler? ? "||#{attachment.url}||\n" : "#{attachment.url}\n"
-            end
-          end
-        end
+        await = chase_message(p_channel, p_webhook, message)
+        execute = execute_webhook(channel, p_channel, client, message.author, content, await)
 
-        await.value
-        execute.value
+        await.join
+        execute.join
       end
-    rescue RestClient::NotFound
-      destroy_link(channel, p_channel)
-      destroy_link(p_channel, channel)
+  end
 
+  # メッセージ追跡
+  def chase_message(p_channel, p_webhook, message)
+    Thread.new do
+      @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
+        next if event.author.name !~ /^#{message.author.distinct}/
+        next if event.message.id < message.id
+        @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
+        true
+      end
+    end
+  end
+
+  # Webhook実行
+  def execute_webhook(channel, p_channel, client, author, content, await)
+    Thread.new do
       begin
+        client.execute do |builder|
+          builder.avatar_url = author.avatar_url
+          builder.username = gen_webhook_username(channel, p_channel, author)
+          builder.content = content
+        end
+      rescue RestClient::NotFound
+        await.kill  # メッセージ追跡スレッドを終了
+
+        destroy_link(channel, p_channel)
+        destroy_link(p_channel, channel)
+
         channel.send_embed do |embed|
           embed.color = 0xbe1931
           embed.title = "⛔ 接続が切断されました"
           embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
           embed.description += " のウェブフックが見つからないため、接続が切断されました。"
         end
-      rescue; nil; end
 
-      begin
         p_channel.send_embed do |embed|
           embed.color = 0xbe1931
           embed.title = "⛔ 接続が切断されました"
-          embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-          embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+          embed.description += "**このチャンネル** のウェブフックが見つからないため、接続が切断されました。"
         end
-      rescue; nil; end
+      rescue
+        await.kill  # メッセージ追跡スレッドを終了
+      end
     end
   end
 
