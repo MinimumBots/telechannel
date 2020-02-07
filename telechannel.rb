@@ -17,6 +17,7 @@ class Telechannel
   }
 
   def initialize(bot_token)
+    @confirm_queue = Hash.new { |hash, key| hash[key] = [] } # 接続承認待ちチャンネル
     @link_pairs = Hash.new { |hash, key| hash[key] = {} }  # 接続済み
     @relation_msgs = Hash.new { |hash, key| hash[key] = [] } # 転送メッセージの関係性
     @error_servers = [] # Webhook取得に失敗したサーバー一覧
@@ -29,7 +30,7 @@ class Telechannel
 
     # BOT初期化処理
     @bot.ready do
-      @bot.game = "#{@bot.prefix}connect"
+      @bot.game = "/connect"
       @webhook_icon = @bot.profile.avatar_url
       resume_links
     end
@@ -39,7 +40,7 @@ class Telechannel
       next unless check_permission(event.channel, event.author)
       next unless p_channel = get_arg(event.channel, p_channel_id)
 
-      new_link(event, p_channel)
+      new_link(event.channel, p_channel, event.author)
       nil
     end
 
@@ -48,7 +49,7 @@ class Telechannel
       next unless check_permission(event.channel, event.author)
       next unless p_channel = get_arg(event.channel, p_channel_id)
 
-      remove_link(event, p_channel)
+      remove_link(event.channel, p_channel, event.author)
       nil
     end
 
@@ -113,9 +114,10 @@ class Telechannel
   # 実行権限チェック
   def check_permission(channel, member)
     return if member.bot_account?
+    return true if channel.private?
+
     return unless member.is_a?(Discordrb::Member)
-    return unless member.permission?(:manage_channels, channel)
-    true
+    member.permission?(:manage_channels, channel)
   end
 
   # 引数のチャンネルを取得
@@ -171,42 +173,46 @@ class Telechannel
   #================================================
 
   # 新しい接続
-  def new_link(event, p_channel)
-    channel = event.channel
-    user = event.author
-
-    # 接続済み検証
+  def new_link(channel, p_channel, user)
+    # 接続可能か検証
     return unless link_validation(channel, p_channel, user)
 
     # 接続方法選択
-    mutual, send = link_select(channel, p_channel, user)
-    return if mutual.nil?
+    if p_channel.private? || send = channel.private?
+      receive = p_channel.private?
+      send    = channel.private?
+    else
+      receive, send = link_select(channel, p_channel, user)
+    end
+    return unless receive || send
 
     # 相手チャンネル上のメンバーデータ
-    p_member = @bot.member(p_channel.server, user.id)
+    p_member = @bot.member(p_channel.server, user.id) unless p_channel.private?
     # 相手チャンネル上で権限を持つか
-    p_permit = !p_member.nil? && p_member.permission?(:manage_channels, channel)
+    p_permit = p_member && p_member.permission?(:manage_channels, channel)
 
     # 相手チャンネル上で権限を持たないとき
     unless p_permit
       return if (p_member = link_confirmation(channel, p_channel)).nil?
     end
 
-    # 相互接続・一方向接続(送信側)の場合
-    if mutual || send
-      return if link_create_other(channel, p_channel, p_permit).nil?
+    # 双方向接続・一方向接続(送信側)の場合
+    if send
+      return unless link_create_other(channel, p_channel, p_permit)
     end
 
     # 自チャンネルのリンクを作成
-    if send || create_link(channel, p_channel)
-      link_success(channel, p_channel, mutual, send, user, p_member)
+    if !receive || create_link(channel, p_channel)
+      link_success(channel, p_channel, receive, send, user, p_member)
     else
-      link_failure(channel, p_channel, mutual, p_permit)
+      link_failure(channel, p_channel, send, p_permit)
     end
   end
 
   # 接続済み検証
   def link_validation(channel, p_channel, user)
+    return if @confirm_queue[channel.id].include?(p_channel.id)
+
     receive = @link_pairs[p_channel.id].has_key?(channel.id)
     send    = @link_pairs[channel.id].has_key?(p_channel.id)
 
@@ -217,11 +223,20 @@ class Telechannel
 
         embed.description = "**#{gen_channel_disp(channel, p_channel)}** と "
         if receive && send
-          embed.description += "**相互接続** されています。"
+          embed.description += "**双方向接続** されています。"
         else
           embed.description += "**一方向接続(#{send ? "送" : "受" }信側)** されています。"
         end
         embed.description += "\n\n切断は `/disconnect #{p_channel.id}` で行えます。"
+      end
+      return
+    end
+
+    if channel.private? && p_channel.private?
+      channel.send_embed do |embed|
+        embed.color = 0xffcc4d
+        embed.title = "⚠️ プライベートチャンネル同士は接続できません"
+        embed.description = "ダイレクトメッセージや、グループチャット同士を接続することはできません。"
       end
       return
     end
@@ -234,7 +249,7 @@ class Telechannel
     message = channel.send_embed do |embed|
       embed.color = 0x3b88c3
       embed.title = "🆕 ##{p_channel.name} との接続方法を選んでください(1分以内)"
-      embed.description = "↔️ **相互接続**\n  相手チャンネルと互いにメッセージを送信します\n\n"
+      embed.description = "↔️ **双方向接続**\n  相手チャンネルと互いにメッセージを送信します\n\n"
       embed.description += "⬅️ **一方向接続(受信側)**\n相手チャンネルのメッセージをこのチャンネルへ送信します\n\n"
       embed.description += "➡️ **一方向接続(送信側)**\nこのチャンネルのメッセージを相手チャンネルへ送信します"
     end
@@ -243,19 +258,25 @@ class Telechannel
     message.create_reaction("➡️")
 
     # 選択待ち
-    mutual = nil; send = nil
+    receive = nil
+    send = nil
     await_event = @bot.add_await!(Discordrb::Events::ReactionAddEvent, { timeout: 60 }) do |event|
       next if event.message != message || event.user != user
-      next if event.emoji.name !~ /[↔️⬅️➡️]/
-      mutual = event.emoji.name == "↔️"
-      send   = event.emoji.name == "➡️"
+
+      case event.emoji.name
+      when "↔️"; send, receive = true, true
+      when "➡️"; send, receive = true, false
+      when "⬅️"; send, receive = false, true
+      else; next
+      end
+
       true
     end
     message.delete
 
     return if await_event.nil?  # イベントタイムアウト
 
-    return mutual, send
+    return receive, send
   end
 
   # 接続承認処理
@@ -264,15 +285,18 @@ class Telechannel
       embed.color = 0x3b88c3
       embed.title = "ℹ️ 相手チャンネルでコマンドを実行してください(10分以内)"
       embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-      embed.description += " で以下のコマンドを実行してください。\n**`/connector #{channel.id}`**"
+      embed.description += " で以下のコマンドを実行してください。\n```/connect #{channel.id}```"
     end
 
     # 承認コマンド入力待ち
     p_member = nil
-    await_event = p_channel.await!({ timeout: 600, content: "/connector #{channel.id}" }) do |event|
+    @confirm_queue[p_channel.id] << channel.id
+    await_event = p_channel.await!({ timeout: 600, content: "/connect #{channel.id}" }) do |event|
       p_member = event.author
-      p_member.permission?(:manage_channels, p_channel)
+      next unless p_channel.private? || p_member.permission?(:manage_channels, p_channel)
+      true
     end
+    @confirm_queue[p_channel.id].delete(channel.id)
     message.delete
 
     # イベントタイムアウト
@@ -281,7 +305,8 @@ class Telechannel
         embed.color = 0xbe1931
         embed.title = "⛔ 接続待ちがタイムアウトしました"
         embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-        embed.description += " で5分以内に相手チャンネルで指定コマンドの実行がありませんでした。\n最初からコマンドを実行しなおしてください。"
+        embed.description += " で10分以内に権限を持ったメンバーによる指定コマンドの実行がありませんでした。\n"
+        embed.description += "最初からコマンドを実行しなおしてください。"
       end
       return
     end
@@ -295,8 +320,8 @@ class Telechannel
       channel.send_embed do |embed|
         embed.color = 0xffcc4d
         embed.title = "⚠️ 相手チャンネルと接続できませんでした"
-        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-        embed.description += " でBOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
+        embed.description = "**#{gen_channel_disp(channel, p_channel)}** でウェブフックを作成できませんでした。\n"
+        embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
       end
 
       # 承認コマンドを要求していた場合
@@ -304,7 +329,8 @@ class Telechannel
         channel.send_embed do |embed|
           embed.color = 0xffcc4d
           embed.title = "⚠️ 相手チャンネルと接続できませんでした"
-          embed.description = "**このチャンネル** でBOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
+          embed.description = "**このチャンネル** でウェブフックを作成できませんでした。\n"
+          embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
         end
       end
       return
@@ -313,15 +339,15 @@ class Telechannel
     true
   end
 
-  # 接続成功
-  def link_success(channel, p_channel, mutual, send, user, p_user)
+  # 接続成功(自チャンネルでのWebhook作成成功)
+  def link_success(channel, p_channel, receive, send, user, p_user)
     channel.send_embed do |embed|
       embed.color = 0x77b255
       embed.title = "✅ 相手チャンネルと接続しました"
 
       embed.description = "**#{gen_channel_disp(channel, p_channel)}** と "
-      if mutual
-        embed.description += "**相互接続** しました。"
+      if receive && send
+        embed.description += "**双方向接続** しました。"
       else
         embed.description += "**一方向接続(#{send ? "送" : "受" }信側)** しました。"
       end
@@ -338,8 +364,8 @@ class Telechannel
       embed.title = "✅ 相手チャンネルと接続しました"
 
       embed.description = "**#{gen_channel_disp(p_channel, channel)}** と "
-      if mutual
-        embed.description += "**相互接続** しました。"
+      if receive && send
+        embed.description += "**双方向接続** しました。"
       else
         embed.description += "**一方向接続(#{send ? "受" : "送" }信側)** しました。"
       end
@@ -352,9 +378,9 @@ class Telechannel
     end
   end
 
-  # 接続失敗
-  def link_failure(channel, p_channel, mutual, p_permit)
-    destroy_link(p_channel, channel) if mutual  # 相手チャンネルのリンクをロールバック
+  # 接続失敗(自チャンネルでのWebhook作成失敗)
+  def link_failure(channel, p_channel, send, p_permit)
+    destroy_link(p_channel, channel) if send  # 相手チャンネルのリンクをロールバック
 
     channel.send_embed do |embed|
       embed.color = 0xffcc4d
@@ -364,10 +390,10 @@ class Telechannel
 
     # 承認コマンドを要求していた場合
     unless p_permit
-      channel.send_embed do |embed|
+      p_channel.send_embed do |embed|
         embed.color = 0xffcc4d
         embed.title = "⚠️ 相手チャンネルと接続できませんでした"
-        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
         embed.description += " でBOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
       end
     end
@@ -376,34 +402,35 @@ class Telechannel
   #================================================
 
   # 接続の切断
-  def remove_link(event, p_channel)
-    channel = event.channel
-    user = event.author
-
+  def remove_link(channel, p_channel, user)
     destroy_link(channel, p_channel)
     destroy_link(p_channel, channel)
 
-    channel.send_embed do |embed|
-      embed.color = 0xbe1931
-      embed.title = "⛔ 接続が切断されました"
-      embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-      embed.description += " と接続が切断されました。"
-      embed.footer = Discordrb::Webhooks::EmbedFooter.new(
-        text: user.distinct,
-        icon_url: user.avatar_url
-      )
-    end
+    begin
+      channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+        embed.description += " と接続が切断されました。"
+        embed.footer = Discordrb::Webhooks::EmbedFooter.new(
+          text: user.distinct,
+          icon_url: user.avatar_url
+        )
+      end
+    rescue; nil; end
 
-    p_channel.send_embed do |embed|
-      embed.color = 0xbe1931
-      embed.title = "⛔ 接続が切断されました"
-      embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-      embed.description += " と接続が切断されました。"
-      embed.footer = Discordrb::Webhooks::EmbedFooter.new(
-        text: user.distinct,
-        icon_url: user.avatar_url
-      )
-    end
+    begin
+      p_channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
+        embed.description += " と接続が切断されました。"
+        embed.footer = Discordrb::Webhooks::EmbedFooter.new(
+          text: user.distinct,
+          icon_url: user.avatar_url
+        )
+      end
+    rescue; nil; end
   end
 
   #================================================
@@ -470,10 +497,12 @@ class Telechannel
   # 接続削除
   def destroy_link(channel, p_channel)
     webhook = @link_pairs[p_channel.id].delete(channel.id)
+    return if webhook.nil?
 
     begin
       webhook.delete("To disconnect from other a channel.")
     rescue; nil; end
+    true
   end
 
   # 接続相手喪失
@@ -524,6 +553,7 @@ class Telechannel
         await = Thread.new do
           @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
             next if event.author.name !~ /^#{message.author.distinct}/
+            next if event.message.id < message.id
             @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
             true
           end
@@ -537,8 +567,8 @@ class Telechannel
           end
         end
 
-        await.join
-        execute.join
+        await.value
+        execute.value
       end
 
       # 添付ファイル(CDNのURL)送信
@@ -561,26 +591,30 @@ class Telechannel
           end
         end
 
-        await.join
-        execute.join
+        await.value
+        execute.value
       end
     rescue RestClient::NotFound
       destroy_link(channel, p_channel)
       destroy_link(p_channel, channel)
 
-      channel.send_embed do |embed|
-        embed.color = 0xbe1931
-        embed.title = "⛔ 接続が切断されました"
-        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
-        embed.description += " のウェブフックが見つからないため、接続が切断されました。"
-      end
+      begin
+        channel.send_embed do |embed|
+          embed.color = 0xbe1931
+          embed.title = "⛔ 接続が切断されました"
+          embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+          embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+        end
+      rescue; nil; end
 
-      p_channel.send_embed do |embed|
-        embed.color = 0xbe1931
-        embed.title = "⛔ 接続が切断されました"
-        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-        embed.description += " のウェブフックが見つからないため、接続が切断されました。"
-      end
+      begin
+        p_channel.send_embed do |embed|
+          embed.color = 0xbe1931
+          embed.title = "⛔ 接続が切断されました"
+          embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
+          embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+        end
+      rescue; nil; end
     end
   end
 
@@ -633,7 +667,7 @@ class Telechannel
     channel.send_embed do |embed|
       embed.color = 0x3b88c3
       embed.title = "ℹ️ 接続中のチャンネル一覧"
-      embed.description = "↔️ 相互接続　⬅️ 一方向接続(受信側)　➡️ 一方向接続(送信側)\n"
+      embed.description = "↔️ 双方向接続　⬅️ 一方向接続(受信側)　➡️ 一方向接続(送信側)\n"
       link_list.each do |p_channel_id, item|
         embed.description += "\n#{LINK_MODE_ICONS[item[:mode]]} #{item[:name]} ID: `#{p_channel_id}`"
       end
@@ -644,6 +678,14 @@ class Telechannel
 
   # 権限の検証
   def test_permittion(channel)
+    if channel.private?
+      channel.send_embed do |embed|
+        embed.color = 0x3b88c3
+        embed.title = "ℹ️ 一方向接続(送信側)のみ使用できます"
+      end
+      return
+    end
+
     bot_member = channel.server.member(@bot.profile.id)
 
     channel.send_embed do |embed|
@@ -661,15 +703,23 @@ class Telechannel
 
   # 相手チャンネル表示取得
   def gen_channel_disp(channel, p_channel)
-    if channel.server == p_channel.server
-      return "#{p_channel.mention}"
+    return "#{p_channel.mention}" if channel.server == p_channel.server
+
+    if p_channel.private?
+      return "#{p_channel.pm? ? "DMチャンネル" : "グループチャット"}: #{p_channel.name}"
     end
-    "#{p_channel.server.name} ##{p_channel.name}"
+
+    "#{p_channel.server.name}: ##{p_channel.name}"
   end
 
   # Webhookのユーザー名生成
   def gen_webhook_username(channel, p_channel, user)
-    server_name = channel.server != p_channel.server ? "#{channel.server.name} " : ""
-    "#{user.distinct} (#{server_name}##{channel.name})"
+    return "#{user.distinct} (##{channel.name})" if channel.server == p_channel.server
+
+    if channel.private?
+      return "#{user.distinct} (#{channel.pm? ? "DMチャンネル" : "グループチャット"}: #{channel.name})"
+    end
+
+    "#{user.distinct} (#{channel.server.name}: ##{channel.name})"
   end
 end
