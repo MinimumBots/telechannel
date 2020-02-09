@@ -104,13 +104,13 @@ class Telechannel
         log = exception
       end
 
+      $stdout = STDOUT
+
       event.send_message("**STDOUT**")
       log.to_s.scan(/.{1,#{2000 - 8}}/m) do |split|
         event.send_message("```\n#{split}\n```")
       end
-
-      $stdout = STDOUT
-
+      
       event.send_message("**RETURN VALUE**")
       value.to_s.scan(/.{1,#{2000 - 8}}/m) do |split|
         event.send_message("```\n#{split}\n```")
