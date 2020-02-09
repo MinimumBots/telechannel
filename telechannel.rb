@@ -1,4 +1,5 @@
 require 'bundler/setup'
+require 'stringio'
 require 'yaml'
 require 'discordrb'
 require 'discordrb/webhooks'
@@ -94,12 +95,26 @@ class Telechannel
     @bot.mention(in: ENV['ADMIN_CHANNEL_ID'].to_i, from: ENV['ADMIN_USER_ID'].to_i) do |event|
       next if event.content !~ /^<@!?\d+> admin (.+)/
 
+      $stdout = StringIO.new
+
       begin
-        value = eval($1)
+        value = eval("pp(#{$1})")
+        log = $stdout.string
       rescue => exception
-        value = exception
+        log = exception
       end
-      event << "```\n#{value}\n```"
+
+      event.send_message("**STDOUT**")
+      log.to_s.scan(/.{1,#{2000 - 8}}/m) do |split|
+        event.send_message("```\n#{split}\n```")
+      end
+
+      $stdout = STDOUT
+
+      event.send_message("**RETURN VALUE**")
+      value.to_s.scan(/.{1,#{2000 - 8}}/m) do |split|
+        event.send_message("```\n#{split}\n```")
+      end
     end
   end
 
