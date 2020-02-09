@@ -30,8 +30,7 @@ class Telechannel
 
     # BOT初期化処理
     @bot.ready do
-      @bot.game = "/connect"
-      @webhook_icon = @bot.profile.avatar_url
+      @bot.game = "/connect でヘルプ表示"
       resume_links
     end
 
