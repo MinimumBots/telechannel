@@ -403,6 +403,16 @@ class Telechannel
 
   # 接続の切断
   def remove_link(channel, p_channel, user)
+    unless @link_pairs[channel.id].include?(p_channel.id) || @link_pairs[p_channel.id].include?(channel.id)
+      channel.send_embed do |embed|
+        embed.color = 0xffcc4d
+        embed.title = "⚠️ 指定されたチャンネルは接続していません"
+        embed.description = "接続には以下のコマンドを使用してください。\n"
+        embed.description += "```/connect [チャンネルID or チャンネルメンション]```"
+      end
+      return
+    end
+
     destroy_link(channel, p_channel)
     destroy_link(p_channel, channel)
 
@@ -515,10 +525,11 @@ class Telechannel
 
   # メッセージ転送
   def transfer_message(event)
+    return if event.author.bot_account?
+    
     channel = event.channel
     message = event.message
 
-    return if event.author.bot_account?
     return unless @link_pairs.has_key?(channel.id)
 
     posts = []
@@ -555,7 +566,7 @@ class Telechannel
 
       # 添付ファイル(CDNのURL)送信
       unless message.attachments.empty?
-        content = attachments.map do |attachment|
+        content = message.attachments.map do |attachment|
           attachment.spoiler? ? "||#{attachment.url}||" : attachment.url
         end.join("\n")
 
