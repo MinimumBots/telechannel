@@ -350,6 +350,7 @@ class Telechannel
         embed.color = 0xffcc4d
         embed.title = "⚠️ 相手チャンネルと接続できませんでした"
         embed.description = "**#{gen_channel_disp(channel, p_channel)}** でウェブフックを作成できませんでした。\n"
+        embed.description += "チャンネルのウェブフックの作成数が上限(10個)に達していないか、"
         embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
       end
 
@@ -359,6 +360,7 @@ class Telechannel
           embed.color = 0xffcc4d
           embed.title = "⚠️ 相手チャンネルと接続できませんでした"
           embed.description = "**このチャンネル** でウェブフックを作成できませんでした。\n"
+          embed.description += "チャンネルのウェブフックの作成数が上限(10個)に達していないか、"
           embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
         end
       end
@@ -415,6 +417,7 @@ class Telechannel
       embed.color = 0xffcc4d
       embed.title = "⚠️ 相手チャンネルと接続できませんでした"
       embed.description = "**このチャンネル** でウェブフックを作成できませんでした。\n"
+      embed.description += "チャンネルのウェブフックの作成数が上限(10個)に達していないか、"
       embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
     end
 
@@ -424,6 +427,7 @@ class Telechannel
         embed.color = 0xffcc4d
         embed.title = "⚠️ 相手チャンネルと接続できませんでした"
         embed.description = "**#{gen_channel_disp(p_channel, channel)}** でウェブフックを作成できませんでした。\n"
+        embed.description += "チャンネルのウェブフックの作成数が上限(10個)に達していないか、"
         embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
       end
     end
