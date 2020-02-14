@@ -478,7 +478,7 @@ class Telechannel
   # 接続の再開
   def resume_links
     @bot.servers.each do |_, server|
-      server.text_channels {|channel| resume_channel_links(channel) }
+      server.text_channels.each {|channel| resume_channel_links(channel) }
     end
   end
 
@@ -602,27 +602,27 @@ class Telechannel
   def post_webhook(channel, p_channel, p_webhook, message)
     client = Discordrb::Webhooks::Client.new(id: p_webhook.id, token: p_webhook.token)
 
-      # メッセージ送信
-      unless message.content.empty?
-        await = chase_message(p_channel, p_webhook, message)
-        execute = execute_webhook(channel, p_channel, client, message.author, message.content, await)
+    # メッセージ送信
+    unless message.content.empty?
+      await = chase_message(p_channel, p_webhook, message)
+      execute = execute_webhook(channel, p_channel, client, message.author, message.content, await)
 
-        await.join
-        execute.join
-      end
+      await.join
+      execute.join
+    end
 
-      # 添付ファイル(CDNのURL)送信
-      unless message.attachments.empty?
-        content = message.attachments.map do |attachment|
-          attachment.spoiler? ? "||#{attachment.url}||" : attachment.url
-        end.join("\n")
+    # 添付ファイル(CDNのURL)送信
+    unless message.attachments.empty?
+      content = message.attachments.map do |attachment|
+        attachment.spoiler? ? "||#{attachment.url}||" : attachment.url
+      end.join("\n")
 
-        await = chase_message(p_channel, p_webhook, message)
-        execute = execute_webhook(channel, p_channel, client, message.author, content, await)
+      await = chase_message(p_channel, p_webhook, message)
+      execute = execute_webhook(channel, p_channel, client, message.author, content, await)
 
-        await.join
-        execute.join
-      end
+      await.join
+      execute.join
+    end
   end
 
   # メッセージ追跡
