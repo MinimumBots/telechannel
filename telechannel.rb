@@ -18,10 +18,11 @@ class Telechannel
   }
 
   def initialize(bot_token)
-    @confirm_queue = Hash.new { |hash, key| hash[key] = [] } # 接続承認待ちチャンネル
-    @link_pairs = Hash.new { |hash, key| hash[key] = {} }  # 接続済み
-    @relation_msgs = Hash.new { |hash, key| hash[key] = [] } # 転送メッセージの関係性
-    @error_servers = [] # Webhook取得に失敗したサーバー一覧
+    @confirm_queue     = Hash.new { |hash, key| hash[key] = [] } # 接続承認待ちチャンネル
+    @link_pairs        = Hash.new { |hash, key| hash[key] = {} } # 接続済み
+    @webhook_relations = Hash.new
+    @related_messages  = Hash.new { |hash, key| hash[key] = {} } # 転送メッセージの関係性
+    @error_channels = [] # Webhook取得に失敗したサーバー一覧
 
     @bot = Discordrb::Commands::CommandBot.new(
       token: bot_token,
@@ -75,7 +76,19 @@ class Telechannel
 
     # メッセージ削除イベント
     @bot.message_delete do |event|
-      destroy_messages(event.id)
+      destroy_message(event.id)
+      nil
+    end
+
+    # メッセージ編集イベント
+    @bot.message_edit do |event|
+      edited_message(event)
+      nil
+    end
+
+    # ウェブフック更新イベント
+    @bot.webhook_update do |event|
+      check_webhooks(event.channel)
       nil
     end
 
@@ -160,7 +173,9 @@ class Telechannel
     # チャンネルIDを解決できるか
     begin
       p_channel = @bot.channel($1)
-    rescue; nil; end
+    rescue
+      p_channel = nil
+    end
 
     if p_channel.nil?
       channel.send_embed do |embed|
@@ -399,7 +414,8 @@ class Telechannel
     channel.send_embed do |embed|
       embed.color = 0xffcc4d
       embed.title = "⚠️ 相手チャンネルと接続できませんでした"
-      embed.description = "**このチャンネル** でBOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
+      embed.description = "**このチャンネル** でウェブフックを作成できませんでした。\n"
+      embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
     end
 
     # 承認コマンドを要求していた場合
@@ -407,8 +423,8 @@ class Telechannel
       p_channel.send_embed do |embed|
         embed.color = 0xffcc4d
         embed.title = "⚠️ 相手チャンネルと接続できませんでした"
-        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
-        embed.description += " でBOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
+        embed.description = "**#{gen_channel_disp(p_channel, channel)}** でウェブフックを作成できませんでした。\n"
+        embed.description += "BOTの権限が十分か確認し、最初からコマンドを実行しなおしてください。"
       end
     end
   end
@@ -458,36 +474,44 @@ class Telechannel
   # 接続の再開
   def resume_links
     @bot.servers.each do |_, server|
-      resume_server_links(server)
+      server.text_channels {|channel| resume_channel_links(channel) }
     end
   end
 
   # 指定サーバーの接続再開
-  def resume_server_links(server)
+  def resume_channel_links(channel)
     begin
-      server.webhooks.each do |webhook|
-        next if webhook.owner != @bot.profile
-
-        channel = webhook.channel
-        begin
-          p_channel = @bot.channel(webhook.name[/Telehook<(\d+)>/, 1])
-        rescue
-          webhook.delete("Other a channel have been lost.")
-
-          channel.send_embed do |embed|
-            embed.color = 0xbe1931
-            embed.title = "⛔ 接続が切断されました"
-            embed.description = "相手チャンネルが見つからないため、接続が切断されました。"
-          end
-
-          next
-        end
-
-        @link_pairs[p_channel.id][channel.id] = webhook
-      end
+      webhooks = channel.webhooks
     rescue
-      @error_servers << server.id
+      @error_channels << channel.id
       return
+    end
+
+    webhooks.each do |webhook|
+      next if webhook.owner != @bot.profile
+
+      begin
+        p_channel = @bot.channel(webhook.name[/Telehook<(\d+)>/, 1])
+      rescue
+        webhook.delete("Other a channel have been lost.")
+
+        channel.send_embed do |embed|
+          embed.color = 0xbe1931
+          embed.title = "⛔ 接続が切断されました"
+          embed.description = "相手チャンネルが見つからないため、接続が切断されました。"
+        end
+        next
+      end
+      next unless p_channel
+
+      # 重複ウェブフックを削除
+      if @link_pairs[p_channel.id].has_key?(channel.id)
+        webhook.delete if webhook != @link_pairs[p_channel.id][channel.id]
+        next
+      end
+
+      @webhook_relations[webhook.id] = p_channel.id
+      @link_pairs[p_channel.id][channel.id] = webhook
     end
 
     true
@@ -495,10 +519,10 @@ class Telechannel
 
   #================================================
 
-  # 接続作成
+  # 接続作成(p_channel ⇒ channel[webhook])
   def create_link(channel, p_channel)
-    if @error_servers.delete(channel.server.id)
-      return unless resume_server_links(channel.server)
+    if @error_channels.delete(channel.id)
+      return unless resume_channel_links(channel)
     end
 
     begin
@@ -507,10 +531,9 @@ class Telechannel
         @webhook_icon,
         "To receive messages from other a channel."
       )
-    rescue
-      return
-    end
-
+    rescue; return; end
+    
+    @webhook_relations[webhook.id] = p_channel.id
     @link_pairs[p_channel.id][channel.id] = webhook
   end
 
@@ -522,6 +545,7 @@ class Telechannel
     begin
       webhook.delete("To disconnect from other a channel.")
     rescue; nil; end
+    @webhook_relations.delete(webhook.id)
     true
   end
 
@@ -529,25 +553,29 @@ class Telechannel
   def lost_link(channel, p_channel_id)
     @link_pairs[channel.id].delete(p_channel_id)
     webhook = @link_pairs[p_channel_id].delete(channel.id)
+    return if webhook.nil?
 
     begin
       webhook.delete("Other a channel have been lost.")
     rescue; nil; end
+    @webhook_relations.delete(webhook.id)
   end
 
   #================================================
 
   # メッセージ転送
-  def transfer_message(event)
+  def transfer_message(event, send_list = nil)
     return if event.author.bot_account?
-    
+
     channel = event.channel
     message = event.message
 
     return unless @link_pairs.has_key?(channel.id)
 
+    send_list = @link_pairs[channel.id] unless send_list
     posts = []
-    @link_pairs[channel.id].each do |p_channel_id, p_webhook|
+
+    send_list.each do |p_channel_id, p_webhook|
       begin
         p_channel = @bot.channel(p_channel_id)
       rescue
@@ -562,6 +590,7 @@ class Telechannel
 
       posts << Thread.new { post_webhook(channel, p_channel, p_webhook, message) }
     end
+
     posts.each {|post| post.join }
   end
 
@@ -598,7 +627,7 @@ class Telechannel
       @bot.add_await!(Discordrb::Events::MessageEvent, { timeout: 60, from: p_webhook.id }) do |event|
         next if event.author.name !~ /^#{message.author.distinct}/
         next if event.message.id < message.id
-        @relation_msgs[message.id] << { channel_id: p_channel.id, message_id: event.message.id }
+        @related_messages[message.id][event.message.id] = p_channel.id
         true
       end
     end
@@ -638,13 +667,86 @@ class Telechannel
   end
 
   # 関係するメッセージの削除
-  def destroy_messages(message_id)
-    return unless relation = @relation_msgs.delete(message_id)
+  def destroy_message(message_id)
+    return unless p_messages = @related_messages.delete(message_id)
 
-    relation.each do |data|
+    p_messages.each do |p_message_id, p_channel_id|
       begin
-        Discordrb::API::Channel.delete_message(@bot.token, data[:channel_id], data[:message_id])
-      rescue; nil; end
+        Discordrb::API::Channel.delete_message(@bot.token, p_channel_id, p_message_id)
+      rescue; next; end
+    end
+  end
+
+  # 関係するメッセージの編集
+  def edited_message(event)
+    return unless p_messages = @related_messages.delete(event.message.id)
+
+    send_list = p_messages.map do |p_message_id, p_channel_id|
+      begin
+        response = Discordrb::API::Channel.messages(@bot.token, p_channel_id, 2)
+        p_message = Discordrb::Message.new(JSON.parse(response)[0], @bot)
+      rescue; next; end
+
+      next if p_message.id != p_message_id
+
+      p_message.delete
+
+      # 添付ファイル付きメッセージの本文を削除
+      p_message = Discordrb::Message.new(JSON.parse(response)[1], @bot)
+      p_message.delete if p_messages.has_key?(p_message.id)
+
+      [p_channel_id, @link_pairs[event.channel.id][p_channel_id]]
+    end.compact.to_h
+
+    transfer_message(event, send_list)
+  end
+
+  #================================================
+
+  # ウェブフックの変更を検証
+  def check_webhooks(channel)
+    begin
+      webhooks = channel.webhooks
+    rescue
+      @link_pairs.each {|key, _| key.delete(channel.id) }
+      @error_channels << channel.id
+      return
+    end
+
+    webhooks.each do |webhook|
+      next if webhook.owner != @bot.profile
+
+      p_channel_id = @webhook_relations[webhook.id]
+      next if webhook.name =~ /Telehook<#{p_channel_id}>/
+
+      begin
+        p_channel = @bot.channel(p_channel_id)
+      rescue
+        lost_link(channel, p_channel_id)
+        channel.send_embed do |embed|
+          embed.color = 0xbe1931
+          embed.title = "⛔ 接続が切断されました"
+          embed.description = "ウェブフックの名前が変更されたため、接続を切断しました。"
+        end
+        return
+      end
+
+      destroy_link(channel, p_channel)
+      destroy_link(p_channel, channel)
+
+      channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(channel, p_channel)}**"
+        embed.description += " と接続していたウェブフックの名前が変更されたため、接続を切断しました。"
+      end
+
+      p_channel.send_embed do |embed|
+        embed.color = 0xbe1931
+        embed.title = "⛔ 接続が切断されました"
+        embed.description = "**#{gen_channel_disp(p_channel, channel)}**"
+        embed.description += " のウェブフックが見つからないため、接続が切断されました。"
+      end
     end
   end
 
