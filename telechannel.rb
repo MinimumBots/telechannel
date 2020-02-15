@@ -39,7 +39,7 @@ class Telechannel
     # コネクション作成
     @bot.command(:connect) do |event, p_channel_id|
       next unless check_permission(event.channel, event.author)
-      next unless p_channel = get_arg(event.channel, p_channel_id)
+      next unless p_channel = get_arg_channel(event.channel, p_channel_id)
 
       new_link(event.channel, p_channel, event.author)
       nil
@@ -48,7 +48,7 @@ class Telechannel
     # コネクション削除
     @bot.command(:disconnect) do |event, p_channel_id|
       next unless check_permission(event.channel, event.author)
-      next unless p_channel = get_arg(event.channel, p_channel_id)
+      next unless p_channel = get_arg_channel(event.channel, p_channel_id)
 
       remove_link(event.channel, p_channel, event.author)
       nil
@@ -148,9 +148,9 @@ class Telechannel
   end
 
   # 引数のチャンネルを取得
-  def get_arg(channel, arg)
+  def get_arg_channel(channel, p_channel_id)
     # ヘルプ表示(パラメータなし)
-    if arg.nil?
+    if p_channel_id.nil?
       channel.send_embed do |embed|
         help = MESSAGES_LIST[:help]
         embed.color = help[:color]
@@ -161,7 +161,7 @@ class Telechannel
     end
 
     # チャンネルが指定されていない
-    if arg !~ /^(\d+)$/ && arg !~ /^<#(\d+)>$/
+    if p_channel_id !~ /^(\d+)$/ && p_channel_id !~ /^<#(\d+)>$/
       channel.send_embed do |embed|
         embed.color = 0xffcc4d
         embed.title = "⚠️ チャンネルIDを指定してください"
