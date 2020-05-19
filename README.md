@@ -40,5 +40,4 @@
 すべてのメッセージを送信する保証はできません。  
 
 ## 導入方法
-次のリンクからご自身のサーバーに導入できます。  
-https://discordapp.com/api/oauth2/authorize?client_id=653253608858583040&permissions=536964160&scope=bot  
+運用停止予定
